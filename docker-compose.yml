@@ -1,0 +1,96 @@
+version: "3.8"
+
+services:
+  # ─────────────────────────── Zookeeper ───────────────────────────
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: eye_zookeeper
+    restart: unless-stopped
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    networks:
+      - eye_network
+
+  # ─────────────────────────── Kafka Broker ───────────────────────────
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: eye_kafka
+    restart: unless-stopped
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_RETENTION_HOURS: 168        # Keep messages for 7 days
+      KAFKA_MESSAGE_MAX_BYTES: 10485760     # 10MB max message size
+    networks:
+      - eye_network
+
+  # ─────────────────────────── Kafka UI ───────────────────────────
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: eye_kafka_ui
+    restart: unless-stopped
+    depends_on:
+      - kafka
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: eye-of-horus-cluster
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+    networks:
+      - eye_network
+
+  # ─────────────────────────── MongoDB ───────────────────────────
+  mongodb:
+    image: mongo:7.0
+    container_name: eye_mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: eyeadmin
+      MONGO_INITDB_ROOT_PASSWORD: eyeofhorus2024
+      MONGO_INITDB_DATABASE: cyber_intel
+    volumes:
+      - mongo_data:/data/db
+      - ./data/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
+    networks:
+      - eye_network
+
+  # ─────────────────────────── MongoDB UI ───────────────────────────
+  mongo-express:
+    image: mongo-express:1.0.2
+    container_name: eye_mongo_express
+    restart: unless-stopped
+    depends_on:
+      - mongodb
+    ports:
+      - "8081:8081"
+    environment:
+      ME_CONFIG_MONGODB_ADMINUSERNAME: eyeadmin
+      ME_CONFIG_MONGODB_ADMINPASSWORD: eyeofhorus2024
+      ME_CONFIG_MONGODB_URL: mongodb://eyeadmin:eyeofhorus2024@mongodb:27017/
+      ME_CONFIG_BASICAUTH: "false"
+    networks:
+      - eye_network
+
+volumes:
+  mongo_data:
+    driver: local
+
+networks:
+  eye_network:
+    driver: bridge

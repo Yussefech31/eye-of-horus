@@ -1,0 +1,52 @@
+# Eye of Horus — Root .gitignore
+
+# ── Environment & Secrets ──────────────────────────────────────────────────
+.env
+*.key
+*.pem
+secrets/
+
+# ── Python ─────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.venv/
+venv/
+env/
+
+# ── Jupyter / IPython ──────────────────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb
+
+# ── Logs ───────────────────────────────────────────────────────────────────
+logs/
+*.log
+
+# ── Spark ──────────────────────────────────────────────────────────────────
+/tmp/
+spark-warehouse/
+metastore_db/
+derby.log
+
+# ── IDE / OS ───────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# ── Data / Models (large files) ────────────────────────────────────────────
+models/*.pkl
+models/*.bin
+models/*.pt
+models/*.h5
+data/*.csv
+data/*.json
+data/*.parquet

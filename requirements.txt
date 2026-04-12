@@ -1,0 +1,44 @@
+# ─────────────────────── Data Collection ───────────────────────
+praw==7.7.1                  # Reddit API wrapper
+requests==2.31.0             # HTTP requests
+feedparser==6.0.11           # RSS/Atom feed parser (rss_scraper)
+beautifulsoup4==4.12.3       # HTML parsing for custom scrapers
+lxml==5.1.0                  # Fast XML/HTML parser for BS4
+selenium==4.18.1             # Browser automation (optional forums)
+
+# ─────────────────────── Streaming ───────────────────────
+kafka-python==2.0.2          # Kafka producer/consumer
+confluent-kafka==2.3.0       # High-performance Kafka client (alternative)
+
+# ─────────────────────── Storage ───────────────────────
+pymongo==4.6.1               # MongoDB driver
+motor==3.3.2                 # Async MongoDB driver (optional)
+
+# ─────────────────────── Big Data Processing ───────────────────────
+pyspark==3.5.1               # Apache Spark for Python
+
+# ─────────────────────── NLP & Feature Engineering ───────────────────────
+nltk==3.8.1                  # Natural language toolkit
+scikit-learn==1.4.1          # TF-IDF, ML models
+textblob==0.18.0             # Sentiment analysis
+transformers==4.38.2         # BERT / HuggingFace models
+torch==2.2.1                 # PyTorch (for BERT)
+gensim==4.3.2                # Word2Vec / Word embeddings
+spacy==3.7.4                 # Advanced NLP pipeline
+
+# ─────────────────────── Machine Learning ───────────────────────
+xgboost==2.0.3               # Gradient boosting (optional classifier)
+imbalanced-learn==0.12.0     # SMOTE / class imbalance handling
+
+# ─────────────────────── Visualization & Dashboard ───────────────────────
+streamlit==1.32.2            # Real-time dashboard
+plotly==5.20.0               # Interactive charts
+pandas==2.2.1                # Data manipulation
+
+# ─────────────────────── Utilities ───────────────────────
+python-dotenv==1.0.1         # Load .env files
+pyyaml==6.0.1                # YAML configuration loading
+loguru==0.7.2                # Structured logging
+schedule==1.2.1              # Task scheduling
+tenacity==8.2.3              # Retry logic for network requests
+tqdm==4.66.2                 # Progress bars
