@@ -194,7 +194,7 @@ class OtxScraper(BaseScraper):
 if __name__ == "__main__":
     import os
     from dotenv import load_dotenv
-    from kafka.producer import OsintProducer
+    from broker.producer import OsintProducer
 
     load_dotenv()
     logger.add("logs/scraper_otx.log", rotation="10 MB", retention="7 days")

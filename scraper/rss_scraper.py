@@ -194,7 +194,7 @@ class RssScraper(BaseScraper):
 
 # ── Standalone entry point ────────────────────────────────────────────────────
 if __name__ == "__main__":
-    from kafka.producer import OsintProducer
+    from broker.producer import OsintProducer
 
     logger.add("logs/scraper_rss.log", rotation="10 MB", retention="7 days")
 

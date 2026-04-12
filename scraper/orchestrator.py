@@ -8,9 +8,10 @@ Usage:
 
 Scrapers run on their own schedules:
     - RSS feeds    → every 5 minutes
-    - Reddit       → every 60 seconds
-    - AlienVault   → every 60 minutes
+    - AlienVault   → every 60 minutes  (requires OTX_API_KEY in .env)
     - NVD CVE      → every 6 hours
+
+    Reddit is disabled temporarily — re-enable by uncommenting in main().
 """
 
 import sys
@@ -28,10 +29,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
-from kafka.producer import OsintProducer
+from broker.producer import OsintProducer
 from config.settings import kafka as kafka_cfg
 
-from scraper.reddit_scraper import RedditScraper
+# from scraper.reddit_scraper import RedditScraper  # re-enable when API key is ready
 from scraper.rss_scraper    import RssScraper
 from scraper.otx_scraper    import OtxScraper
 from scraper.nvd_scraper    import NvdScraper
@@ -156,12 +157,13 @@ def main() -> None:
             "interval": 5 * 60,         # every 5 minutes
             "key":      "rss",
         },
-        {
-            "name":     "Reddit",
-            "scraper":  RedditScraper(),
-            "interval": 60,             # every 60 seconds
-            "key":      "reddit",
-        },
+        # ── Reddit disabled — uncomment when API key is available ──────────
+        # {
+        #     "name":     "Reddit",
+        #     "scraper":  RedditScraper(),
+        #     "interval": 60,
+        #     "key":      "reddit",
+        # },
         {
             "name":     "NVD-CVE",
             "scraper":  NvdScraper(hours_back=24, min_cvss=0.0),

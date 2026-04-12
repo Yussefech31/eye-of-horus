@@ -54,7 +54,7 @@ eye-of-horus/
 │   ├── otx_scraper.py          # AlienVault OTX threat pulses
 │   └── nvd_scraper.py          # NIST NVD CVE vulnerability feed
 │
-├── kafka/
+├── broker/
 │   ├── producer.py             # Message publisher with retry + enveloping
 │   └── consumer.py             # Kafka → MongoDB raw storage
 │
@@ -111,7 +111,7 @@ python scraper/orchestrator.py
 
 **Terminal 2 — Kafka → MongoDB storage:**
 ```bash
-python kafka/consumer.py
+python broker/consumer.py
 ```
 
 **Terminal 3 — PySpark threat processing:**
