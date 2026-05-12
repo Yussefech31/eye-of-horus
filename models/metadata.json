@@ -1,0 +1,12 @@
+{
+  "trained_at": "2026-05-02T00:07:33.478299",
+  "n_samples": 40,
+  "lr_cv_f1": 0.8833333333333332,
+  "rf_cv_f1": 0.8253968253968254,
+  "models": {
+    "logistic": "C:\\Users\\WIN 11 25H2\\Desktop\\s8\\technique-de-veille\\eye-of-horus\\models\\logistic_regression.pkl",
+    "rf": "C:\\Users\\WIN 11 25H2\\Desktop\\s8\\technique-de-veille\\eye-of-horus\\models\\random_forest.pkl",
+    "isolation": "C:\\Users\\WIN 11 25H2\\Desktop\\s8\\technique-de-veille\\eye-of-horus\\models\\isolation_forest.pkl",
+    "tfidf": "C:\\Users\\WIN 11 25H2\\Desktop\\s8\\technique-de-veille\\eye-of-horus\\models\\tfidf_vectorizer.pkl"
+  }
+}

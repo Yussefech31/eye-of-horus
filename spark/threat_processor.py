@@ -19,6 +19,8 @@ import json
 from pathlib import Path
 from typing import Iterator
 
+sys.setrecursionlimit(10000) # Fixes PySpark PicklingError on newer Python versions
+
 # ── PySpark ───────────────────────────────────────────────────────────────────
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
@@ -57,77 +59,13 @@ ENVELOPE_SCHEMA = StructType([
 #  PySpark UDFs — Text Processing & Threat Scoring
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _clean_text(text: str) -> str:
-    """Lowercase, remove non-alpha characters, collapse whitespace."""
-    if not text:
-        return ""
-    text = text.lower()
-    text = re.sub(r"[^a-z0-9\s]", " ", text)
-    return re.sub(r"\s+", " ", text).strip()
-
-
-def _keyword_score(text: str, keywords: list) -> float:
-    """
-    Compute normalized keyword frequency score.
-    Returns a [0, 1] float: ratio of threat keywords found vs total tokens.
-    """
-    if not text:
-        return 0.0
-    tokens = text.split()
-    if not tokens:
-        return 0.0
-    hits = sum(1 for token in tokens if token in keywords)
-    # Normalize to [0,1] with a soft cap at 10 hits
-    return min(hits / 10.0, 1.0)
-
-
-def _sentiment_score(text: str) -> float:
-    """
-    Simple lexicon-based negative sentiment score in [0, 1].
-    Higher = more negative / aggressive tone (higher threat).
-    For production, replace with a fine-tuned BERT model.
-    """
-    NEGATIVE_WORDS = {
-        "attack", "breach", "hack", "steal", "malicious", "malware",
-        "ransomware", "exploit", "leak", "infiltrate", "ddos", "flood",
-        "threat", "dangerous", "critical", "vulnerable", "pwned",
-        "compromised", "infected", "backdoor", "dump", "stolen",
-    }
-    if not text:
-        return 0.0
-    tokens = set(text.lower().split())
-    hits = len(tokens & NEGATIVE_WORDS)
-    return min(hits / 8.0, 1.0)
-
-
-def _compute_threat_score(
-    keyword_freq: float,
-    volume_score: float,
-    sentiment: float,
-    trend_score: float,
-    alpha: float = threat_cfg.ALPHA,
-    beta: float  = threat_cfg.BETA,
-    gamma: float = threat_cfg.GAMMA,
-    delta: float = threat_cfg.DELTA,
-) -> float:
-    """
-    Score = α·frequency + β·volume + γ·sentiment + δ·trend
-    All inputs and output are in [0, 1].
-    """
-    score = alpha * keyword_freq + beta * volume_score + gamma * sentiment + delta * trend_score
-    return round(min(max(score, 0.0), 1.0), 4)
-
+from spark import udfs
 
 # Register UDFs
-clean_text_udf        = F.udf(_clean_text, StringType())
-keyword_score_udf     = F.udf(
-    lambda text: _keyword_score(text, threat_cfg.THREAT_KEYWORDS), FloatType()
-)
-sentiment_score_udf   = F.udf(_sentiment_score, FloatType())
-threat_score_udf      = F.udf(
-    lambda kw, vol, sent, trend: _compute_threat_score(kw, vol, sent, trend),
-    FloatType()
-)
+clean_text_udf        = F.udf(udfs.clean_text, StringType())
+keyword_score_udf     = F.udf(udfs.keyword_score, FloatType())
+sentiment_score_udf   = F.udf(udfs.sentiment_score, FloatType())
+threat_score_udf      = F.udf(udfs.compute_threat_score, FloatType())
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -195,7 +133,7 @@ def run_streaming_job() -> None:
         .format("kafka")
         .option("kafka.bootstrap.servers", kafka_cfg.BOOTSTRAP_SERVERS)
         .option("subscribe", kafka_cfg.TOPIC_RAW)
-        .option("startingOffsets", "latest")
+        .option("startingOffsets", "earliest")
         .option("failOnDataLoss", "false")
         .load()
     )

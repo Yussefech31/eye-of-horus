@@ -9,8 +9,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from kafka import KafkaConsumer
-from kafka.errors import KafkaError
+from confluent_kafka import Consumer
 from loguru import logger
 from pymongo import MongoClient, UpdateOne
 from pymongo.errors import BulkWriteError, PyMongoError
@@ -31,10 +30,12 @@ class MongoConsumer:
     """
 
     BATCH_SIZE = 100        # Number of messages per MongoDB bulk write
-    POLL_TIMEOUT_MS = 1000  # How long to wait for messages each poll cycle
+    POLL_TIMEOUT = 1.0      # How long to wait for messages each poll cycle (seconds)
 
     def __init__(self) -> None:
         self._consumer = self._build_consumer()
+        self._consumer.subscribe([kafka_cfg.TOPIC_RAW])
+        
         self._mongo_client = self._build_mongo()
         self._collection = (
             self._mongo_client[mongo_cfg.DB_NAME][mongo_cfg.COLLECTION_RAW]
@@ -44,18 +45,14 @@ class MongoConsumer:
     # ── Connections ───────────────────────────────────────────────────────────
 
     @retry(stop=stop_after_attempt(5), wait=wait_exponential(min=2, max=30))
-    def _build_consumer(self) -> KafkaConsumer:
-        return KafkaConsumer(
-            kafka_cfg.TOPIC_RAW,
-            bootstrap_servers=kafka_cfg.BOOTSTRAP_SERVERS,
-            group_id=kafka_cfg.GROUP_ID,
-            auto_offset_reset="earliest",
-            enable_auto_commit=False,       # Manual commit after successful write
-            value_deserializer=lambda v: json.loads(v.decode("utf-8")),
-            session_timeout_ms=30000,
-            heartbeat_interval_ms=10000,
-            max_poll_records=self.BATCH_SIZE,
-        )
+    def _build_consumer(self) -> Consumer:
+        conf = {
+            'bootstrap.servers': kafka_cfg.BOOTSTRAP_SERVERS,
+            'group.id': kafka_cfg.GROUP_ID,
+            'auto.offset.reset': 'earliest',
+            'enable.auto.commit': False
+        }
+        return Consumer(conf)
 
     @retry(stop=stop_after_attempt(5), wait=wait_exponential(min=2, max=30))
     def _build_mongo(self) -> MongoClient:
@@ -74,19 +71,26 @@ class MongoConsumer:
         )
         try:
             while True:
-                records = self._consumer.poll(timeout_ms=self.POLL_TIMEOUT_MS)
-                if not records:
+                # Poll for a batch of messages
+                msgs = self._consumer.consume(num_messages=self.BATCH_SIZE, timeout=self.POLL_TIMEOUT)
+                if not msgs:
                     continue
 
-                # Flatten all partition records into a single batch
-                messages = [
-                    msg.value
-                    for partition_records in records.values()
-                    for msg in partition_records
-                ]
+                envelopes = []
+                for msg in msgs:
+                    if msg.error():
+                        logger.error(f"Consumer error: {msg.error()}")
+                        continue
+                    
+                    try:
+                        val = msg.value().decode('utf-8')
+                        envelope = json.loads(val)
+                        envelopes.append(envelope)
+                    except Exception as e:
+                        logger.error(f"Failed to parse message: {e}")
 
-                if messages:
-                    self._persist_batch(messages)
+                if envelopes:
+                    self._persist_batch(envelopes)
                     self._consumer.commit()  # Commit offsets only after successful write
 
         except KeyboardInterrupt:

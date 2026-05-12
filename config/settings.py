@@ -49,8 +49,8 @@ class MongoConfig:
 #  Reddit API Settings
 # ═══════════════════════════════════════════════════════════════════════════════
 class RedditConfig:
-    CLIENT_ID: str = os.getenv("REDDIT_CLIENT_ID", "")
-    CLIENT_SECRET: str = os.getenv("REDDIT_CLIENT_SECRET", "")
+    CLIENT_ID: str = os.getenv("", "")
+    CLIENT_SECRET: str = os.getenv("", "")
     USER_AGENT: str = os.getenv(
         "REDDIT_USER_AGENT", "eye-of-horus/1.0 by /u/anonymous"
     )

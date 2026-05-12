@@ -157,7 +157,7 @@ class OtxScraper(BaseScraper):
         ]
         malware_families = raw.get("malware_families", [])
         attack_ids       = [
-            a.get("id", "")
+            a if isinstance(a, str) else a.get("id", "")
             for a in raw.get("attack_ids", [])
         ]
 

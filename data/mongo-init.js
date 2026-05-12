@@ -1,10 +1,4 @@
-"""
-MongoDB initialization script.
-Runs once when the container is first started.
-Creates collections, indexes, and the initial schema.
-"""
 
-// Switch to our database
 db = db.getSiblingDB('cyber_intel');
 
 // ── Collections & Indexes ─────────────────────────────────────────────────────

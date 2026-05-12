@@ -1,14 +1,14 @@
-# 👁️ Eye of Horus
+# 👁️ Eye of Horus — Cyber Threat Intelligence & SOC Pipeline
 
-> **Automated Cybersecurity Monitoring and Early Detection of Cyber-Activism Campaigns**
+> **Automated Cybersecurity Monitoring, OSINT Data Aggregation, and Early Detection of Cyber-Activism Campaigns**
 
-A real-time OSINT pipeline that collects data from public sources, processes it through Apache Kafka and PySpark, scores threats using NLP + Machine Learning, and presents results in a live Streamlit dashboard.
+Eye of Horus is a comprehensive, real-time Open-Source Intelligence (OSINT) pipeline. It collects cybersecurity data from public sources (RSS feeds, AlienVault OTX, NVD CVEs, Reddit), processes and scores the data for potential threats using Natural Language Processing (NLP), and presents the findings in a professional, live Streamlit Security Operations Center (SOC) dashboard.
 
 ---
 
 ## 🏗️ Architecture
 
-```
+```text
 ┌──────────────────────────────────────────────────────────────────┐
 │                         DATA SOURCES                             │
 │   Reddit   │   RSS Feeds   │   AlienVault OTX   │   NVD CVEs    │
@@ -17,190 +17,181 @@ A real-time OSINT pipeline that collects data from public sources, processes it 
                           ▼
               ┌───────────────────────┐
               │    Apache Kafka       │  Topic: raw-osint
-              │    raw-osint topic    │
+              │    Message Broker     │
               └──────────┬────────────┘
                          │
-           ┌─────────────┼────────────────┐
-           ▼             ▼                ▼
-    kafka/consumer   spark/threat_processor.py
-    (raw storage)    (NLP + ML scoring)
-           │             │
-     MongoDB:        MongoDB:         Kafka:
-     raw_posts     threat_scores   processed-threats
+                         ▼
+                  broker/consumer.py
+                  (raw storage bridge)
                          │
-                   dashboard/app.py
-                  (Streamlit UI :8501)
+                         ▼
+        ┌──────────────────────────────────┐
+        │             MongoDB              │
+        │      Collection: raw_posts       │
+        └────────────────┬─────────────────┘
+                         │
+                         ▼
+          spark/threat_processor_basic.py
+         (NLP + Threat Scoring + Alerting)
+                         │
+        ┌────────────────┴─────────────────┐
+        ▼                                  ▼
+ ┌───────────────┐                  ┌───────────────┐
+ │    MongoDB    │                  │    MongoDB    │
+ │ threat_scores │                  │    alerts     │
+ └──────┬────────┘                  └──────┬────────┘
+        │                                  │
+        └────────────────┬─────────────────┘
+                         ▼
+                  dashboard/app.py
+          (Streamlit SOC Dashboard :8501)
 ```
 
 ---
 
 ## 📁 Project Structure
 
-```
+```text
 eye-of-horus/
-├── docker-compose.yml          # Kafka + MongoDB + UI containers
-├── requirements.txt            # All Python dependencies
-├── .env.example                # Configuration template → copy to .env
-├── .gitignore
+├── start_project.bat           # 🚀 One-click startup script for Windows
+├── docker-compose.yml          # Kafka + Zookeeper + MongoDB + Mongo Express
+├── requirements.txt            # Python dependencies
+├── .env                        # Environment configuration (API keys, weights)
 │
 ├── config/
-│   └── settings.py             # Typed config loader from .env
+│   └── settings.py             # Strongly typed config loader from .env
 │
 ├── scraper/
-│   ├── base_scraper.py         # Abstract base class (standard schema)
-│   ├── orchestrator.py         # 🚀 Run this — launches all scrapers
-│   ├── reddit_scraper.py       # Reddit PRAW (hot + new feeds)
-│   ├── rss_scraper.py          # 8 cybersecurity RSS feeds
+│   ├── orchestrator.py         # Runs all scrapers concurrently on schedules
+│   ├── base_scraper.py         # Abstract base class enforcing standard schema
+│   ├── reddit_scraper.py       # Reddit PRAW scraper
+│   ├── rss_scraper.py          # 8 cybersecurity RSS feeds (BleepingComputer, Hacker News, etc.)
 │   ├── otx_scraper.py          # AlienVault OTX threat pulses
 │   └── nvd_scraper.py          # NIST NVD CVE vulnerability feed
 │
 ├── broker/
-│   ├── producer.py             # Message publisher with retry + enveloping
-│   └── consumer.py             # Kafka → MongoDB raw storage
+│   ├── producer.py             # Kafka producer wrapper with retry logic
+│   └── consumer.py             # Kafka → MongoDB raw_posts persistence
 │
 ├── spark/
-│   └── threat_processor.py     # PySpark streaming: NLP → threat scoring
+│   ├── threat_processor_basic.py # Pure Python NLP pipeline & threat scoring
+│   ├── threat_processor.py     # Legacy PySpark implementation
+│   └── udfs.py                 # PySpark User Defined Functions
 │
 ├── models/
-│   └── threat_classifier.py    # ML models (LR + RF + Isolation Forest)
+│   ├── threat_classifier.py    # Machine Learning models (LR, RF, Isolation Forest)
+│   └── *.pkl                   # Serialized trained models
 │
 ├── dashboard/
-│   └── app.py                  # Streamlit real-time threat dashboard
+│   └── app.py                  # Streamlit 5-tab SOC Dashboard
 │
 └── data/
-    └── mongo-init.js           # MongoDB collection + index setup
+    └── mongo-init.js           # MongoDB initialization (indexes, collections)
 ```
 
 ---
 
-## ⚡ Quick Start
+## ⚙️ Core Components Explained
 
-### Step 1 — Configure credentials
+### 1. Data Ingestion (Scrapers)
+The `scraper/orchestrator.py` script runs multiple background threads, each executing a specific scraper on a schedule. 
+- **RSS**: Polls every 5 minutes.
+- **NVD CVE**: Polls every 5 minutes.
+- **AlienVault OTX**: Polls every 60 minutes.
+All scraped data is normalized into a standard JSON schema and pushed to the Kafka `raw-osint` topic.
 
+### 2. Message Broker (Kafka)
+Kafka acts as the high-throughput buffer. The `broker/consumer.py` (powered by `confluent-kafka` for maximum stability) reads from `raw-osint` and bulk-upserts the raw data into the MongoDB `raw_posts` collection. This decouples data ingestion from data processing.
+
+### 3. Threat Processing (NLP & Scoring)
+The `spark/threat_processor_basic.py` continuously polls the MongoDB `raw_posts` collection for unprocessed items. It applies:
+- **Text Cleaning**: Normalizes text and removes noise.
+- **Keyword Frequency**: Checks for malicious terms (e.g., "ddos", "ransomware").
+- **Sentiment Analysis**: Detects aggressive or negative language.
+- **Volume & Trend Analysis**: Uses metrics like comment counts or CVSS scores.
+
+It calculates a final `threat_score` (0.0 to 1.0) and saves it to the `threat_scores` collection. If the score exceeds the threshold (default `0.65`), it also generates a record in the `alerts` collection.
+
+### 4. Streamlit SOC Dashboard
+A modern, dark-themed dashboard (`dashboard/app.py`) providing a professional SOC interface with 5 tabs:
+- **🏠 Overview**: KPI cards, threat timeline charts, and top threats table.
+- **🚨 Live Alerts**: A dedicated feed for high-severity alerts.
+- **📊 Analytics**: Visualizations of score distributions, source breakdowns, and NLP scatter plots.
+- **🔍 Explorer**: A searchable, filterable data grid of all threat intelligence records.
+- **⚙️ System Status**: Real-time pipeline health, MongoDB collection counts, and architecture overview.
+
+---
+
+## ⚡ Quick Start Guide
+
+### Step 1: Environment Setup
+Ensure you have Python 3.12+ and Docker installed.
+Create a Python virtual environment and install dependencies:
 ```bash
-copy .env.example .env
-```
-
-Edit `.env` and fill in:
-- `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` → [reddit.com/prefs/apps](https://www.reddit.com/prefs/apps)
-- `OTX_API_KEY` → [otx.alienvault.com](https://otx.alienvault.com) (free account)
-
-### Step 2 — Start infrastructure
-
-```bash
-docker-compose up -d
-```
-
-| Service | URL |
-|---|---|
-| Kafka UI | http://localhost:8080 |
-| MongoDB UI | http://localhost:8081 |
-
-### Step 3 — Install Python dependencies
-
-```bash
+python -m venv venv
+venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### Step 4 — Run the pipeline (3 terminals)
+### Step 2: Configuration
+Create a `.env` file in the root directory (copy from `.env.example` if available) and add your API keys:
+```env
+OTX_API_KEY=your_alienvault_otx_key_here
+REDDIT_CLIENT_ID=your_reddit_client_id
+REDDIT_CLIENT_SECRET=your_reddit_secret
+```
 
-**Terminal 1 — All scrapers (orchestrated):**
+### Step 3: Run the Pipeline (One-Click)
+Double-click the **`start_project.bat`** file on Windows. This script will automatically:
+1. Start Docker Compose (Kafka, Zookeeper, MongoDB).
+2. Launch the Scraper Orchestrator.
+3. Launch the Broker Consumer.
+4. Launch the Threat Processor.
+5. Open the Streamlit Dashboard.
+
+Alternatively, you can run them manually in separate terminals:
 ```bash
+docker-compose up -d
 python scraper/orchestrator.py
-```
-
-**Terminal 2 — Kafka → MongoDB storage:**
-```bash
 python broker/consumer.py
-```
-
-**Terminal 3 — PySpark threat processing:**
-```bash
-spark-submit \
-  --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1 \
-  spark/threat_processor.py
-```
-
-**Terminal 4 — Dashboard:**
-```bash
+python spark/threat_processor_basic.py
 streamlit run dashboard/app.py
 ```
-→ Open http://localhost:8501
 
-### Step 5 — Train ML models (optional but recommended)
-
-```bash
-# Train on synthetic data (fast, for testing)
-python models/threat_classifier.py --train
-
-# Test predictions
-python models/threat_classifier.py --predict
-
-# Train on real labeled data from MongoDB (production)
-python models/threat_classifier.py --train --mongo
-```
+### Step 4: Access the Dashboard
+Open your browser and navigate to: **http://localhost:8501**
 
 ---
 
 ## 📊 Threat Score Formula
 
+The threat score is a weighted sum designed to calculate the severity of an OSINT record:
 ```
-Score = α·frequency + β·volume + γ·sentiment + δ·trend
+Score = (α * Keyword) + (β * Volume) + (γ * Sentiment) + (δ * Trend)
 ```
 
-| Weight | Default | Signal |
+| Variable | Default Weight | Description |
 |---|---|---|
-| α = 0.30 | Keyword frequency | ddos, leak, hack, ransomware... |
-| β = 0.20 | Post volume | Comment count / engagement |
-| γ = 0.30 | Negative sentiment | Aggressive language detection |
-| δ = 0.20 | Trend / virality | Upvote ratio, post velocity |
+| `α` (Alpha) | 0.30 | Keyword frequency (e.g., ddos, exploit, breach) |
+| `β` (Beta) | 0.20 | Volume metrics (e.g., number of comments) |
+| `γ` (Gamma) | 0.30 | Negative sentiment / aggressive language |
+| `δ` (Delta) | 0.20 | Trend / Virality (e.g., upvote ratio, CVSS score) |
 
-Scores ≥ `0.65` (configurable) trigger an alert.
-
----
-
-## 🛠️ Data Sources
-
-| Source | Scraper | Interval | Credentials |
-|---|---|---|---|
-| Reddit | `reddit_scraper.py` | 60 sec | Free API key |
-| RSS Feeds (8 sources) | `rss_scraper.py` | 5 min | None required |
-| AlienVault OTX | `otx_scraper.py` | 60 min | Free API key |
-| NIST NVD CVEs | `nvd_scraper.py` | 6 hours | None required |
+Scores map to the following severities:
+- `0.85 - 1.00`: **CRITICAL**
+- `0.65 - 0.84`: **HIGH** (Triggers Alert)
+- `0.40 - 0.64`: **MEDIUM**
+- `0.00 - 0.39`: **LOW**
 
 ---
 
-## 🧠 ML Models
+## 🛠️ Technology Stack
 
-| Model | Type | Purpose |
-|---|---|---|
-| Logistic Regression | Classifier | Fast, interpretable threat/benign classification |
-| Random Forest | Classifier | Robust non-linear classification |
-| Isolation Forest | Anomaly detector | Detect novel threats not in training data |
-
----
-
-## ⚙️ Configuration
-
-All settings are in `.env`. Key variables:
-
-```env
-THREAT_SCORE_THRESHOLD=0.65    # Alert threshold
-THREAT_ALPHA=0.3               # Keyword frequency weight
-THREAT_BETA=0.2                # Volume weight
-THREAT_GAMMA=0.3               # Sentiment weight
-THREAT_DELTA=0.2               # Trend weight
-SCRAPE_INTERVAL_SECONDS=60     # Reddit poll interval
-```
-
----
-
-## 🔒 Security Notes
-
-- Never commit `.env` to git — it is listed in `.gitignore`
-- The MongoDB admin password in `docker-compose.yml` is for **local development only**
-- RSS and NVD scrapers contain **no personal data** — safe by design
-- AlienVault OTX data is under [CC BY-NC-SA](https://otx.alienvault.com/api) license
+- **Backend / Processing**: Python 3.14, Pandas, Tenacity, Loguru, Confluent-Kafka
+- **Message Broker**: Apache Kafka, Zookeeper
+- **Database**: MongoDB
+- **Frontend**: Streamlit, Plotly (Interactive Charts)
+- **Infrastructure**: Docker, Docker Compose
 
 ---
 

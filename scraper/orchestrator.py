@@ -167,7 +167,7 @@ def main() -> None:
         {
             "name":     "NVD-CVE",
             "scraper":  NvdScraper(hours_back=24, min_cvss=0.0),
-            "interval": 6 * 60 * 60,   # every 6 hours
+            "interval": 5 * 60,   # every 5 minutes
             "key":      "nvd",
         },
     ]
