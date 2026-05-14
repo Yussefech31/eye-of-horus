@@ -109,6 +109,9 @@ class ThreatProcessor:
         clean = clean_text(raw_text)
         kw = keyword_score(clean)
         sent = sentiment_score(clean)
+        
+        from spark.udfs import extract_location
+        extracted_loc = extract_location(raw_text)
 
         extra = doc.get("extra", {})
         if isinstance(extra, str):
@@ -139,6 +142,7 @@ class ThreatProcessor:
             "severity": score_to_severity(threat),
             "published_at": doc.get("published_at"),
             "processed_at": now,
+            "extracted_location": extracted_loc,
         }
 
     def _persist_batch(self, records: list[dict]) -> None:

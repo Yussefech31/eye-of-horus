@@ -66,6 +66,7 @@ clean_text_udf        = F.udf(udfs.clean_text, StringType())
 keyword_score_udf     = F.udf(udfs.keyword_score, FloatType())
 sentiment_score_udf   = F.udf(udfs.sentiment_score, FloatType())
 threat_score_udf      = F.udf(udfs.compute_threat_score, FloatType())
+extract_location_udf  = F.udf(udfs.extract_location, StringType())
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -158,6 +159,7 @@ def run_streaming_job() -> None:
     enriched = (
         parsed
         .withColumn("clean_text",   clean_text_udf(F.col("text")))
+        .withColumn("extracted_location", extract_location_udf(F.col("text")))
         .withColumn("keyword_score", keyword_score_udf(F.col("clean_text")))
         .withColumn("sentiment_score", sentiment_score_udf(F.col("clean_text")))
         # volume_score: normalized comment/engagement proxy (simplified for streaming)
@@ -216,7 +218,7 @@ def run_streaming_job() -> None:
                 F.struct(
                     "post_id", "source", "title", "url",
                     "threat_score", "keyword_score", "sentiment_score",
-                    "published_at", "processed_at",
+                    "published_at", "processed_at", "extracted_location",
                 )
             ).alias("value"),
         )

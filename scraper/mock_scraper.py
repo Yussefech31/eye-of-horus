@@ -20,6 +20,15 @@ from broker.producer import OsintProducer
 from config.settings import kafka as kafka_cfg
 
 
+SCENARIOS = {
+    "Ransomware Outbreak": {"keywords": ["ransomware", "encryption", "lockbit", "malware"]},
+    "DDoS Attack": {"keywords": ["ddos", "flood", "botnet", "volumetric"]},
+    "Zero-Day Exploit": {"keywords": ["zero-day", "exploit", "cve", "vulnerability"]},
+    "Data Breach": {"keywords": ["dark web", "data leak", "dump", "pii", "credentials"]},
+    "Unauthorized Access": {"keywords": ["brute force", "login", "backdoor", "admin"]}
+}
+
+
 class MockScraper(BaseScraper):
     """Generates synthetic cybersecurity events for testing the alert pipeline."""
 

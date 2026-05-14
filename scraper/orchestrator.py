@@ -36,6 +36,7 @@ from config.settings import kafka as kafka_cfg
 from scraper.rss_scraper    import RssScraper
 from scraper.otx_scraper    import OtxScraper
 from scraper.nvd_scraper    import NvdScraper
+from scraper.mock_scraper   import MockScraper
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  Logging setup
@@ -169,6 +170,12 @@ def main() -> None:
             "scraper":  NvdScraper(hours_back=24, min_cvss=0.0),
             "interval": 5 * 60,   # every 5 minutes
             "key":      "nvd",
+        },
+        {
+            "name":     "Mock-Simulation",
+            "scraper":  MockScraper(),
+            "interval": 2,        # every 2 seconds (controllable via Mongo)
+            "key":      "mock_generator",
         },
     ]
 

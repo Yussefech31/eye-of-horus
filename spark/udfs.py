@@ -38,3 +38,34 @@ def compute_threat_score(keyword_freq: float, volume_score: float, sentiment: fl
              threat_cfg.GAMMA * sentiment + 
              threat_cfg.DELTA * trend_score)
     return round(min(max(score, 0.0), 1.0), 4)
+
+def extract_location(text: str) -> str:
+    """Extract Geo-Political Entity (GPE) using regex dictionary lookup."""
+    if not text or len(text.strip()) < 3:
+        return "Unknown"
+        
+    text_lower = text.lower()
+    
+    # Common locations to check
+    # Note: in a production scenario, this list would be comprehensive
+    locations = [
+        "Russia", "China", "United States", "US", "USA", "Iran",
+        "North Korea", "Brazil", "India", "Nigeria", "Ukraine",
+        "Germany", "Romania", "Turkey", "Vietnam", "Indonesia",
+        "France", "United Kingdom", "UK", "London", "Paris",
+        "Moscow", "Beijing", "Washington", "New York", "Tokyo",
+        "Israel"
+    ]
+    
+    
+    for loc in locations:
+        # Check for whole word match to avoid partial matches like "us" in "virus"
+        if re.search(rf'\b{loc.lower()}\b', text_lower):
+            # Normalise "US"/"USA" to "United States"
+            if loc in ["US", "USA"]:
+                return "United States"
+            if loc == "UK":
+                return "United Kingdom"
+            return loc
+            
+    return "Unknown"

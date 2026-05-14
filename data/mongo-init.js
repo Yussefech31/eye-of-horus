@@ -21,6 +21,14 @@ db.createCollection('alerts');
 db.alerts.createIndex({ "created_at": -1 });
 db.alerts.createIndex({ "threat_score": -1 });
 db.alerts.createIndex({ "acknowledged": 1 });
+db.alerts.createIndex({ "status": 1 });
+db.alerts.createIndex({ "assigned_to": 1 });
+db.alerts.createIndex({ "priority": 1 });
+
+// analyst_notes: user-generated notes for alerts/threats
+db.createCollection('analyst_notes');
+db.analyst_notes.createIndex({ "post_id": 1 });
+db.analyst_notes.createIndex({ "created_at": -1 });
 
 print("✅ Eye of Horus — MongoDB initialized successfully.");
-print("   Collections: raw_posts, threat_scores, alerts");
+print("   Collections: raw_posts, threat_scores, alerts, analyst_notes");
