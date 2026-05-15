@@ -30,3 +30,4 @@ tenacity==8.2.3              # Retry logic for network requests
 numpy>=1.26,<3.0             # Numerical computing
 fpdf2==2.8.0                 # PDF generation for SOC reports
 faker==24.4.0                # Mock data generation
+google-genai==2.2.0          # Google Gemini AI SDK

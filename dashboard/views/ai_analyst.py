@@ -14,7 +14,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from dashboard.components import render_section_header, render_empty_state, badge_html
 from services.ai_service import AIAnalystService
 
-@st.cache_resource
 def get_ai_service():
     return AIAnalystService()
 
@@ -68,13 +67,17 @@ def render(df: pd.DataFrame, threshold: float):
     with col_ai:
         st.markdown("### 🧠 AI Analyst Report")
         
+        report_key = f"ai_report_{selected_row.get('post_id', 'unknown')}"
+        
         if st.button("Generate Analysis Report", type="primary", use_container_width=True):
             with st.spinner("AI is analyzing the threat signature..."):
-                report = ai_service.analyze_alert(selected_row)
-                st.markdown(
-                    f'<div style="background:rgba(13,17,23,0.8); border:1px solid #30363d; '
-                    f'padding:20px; border-radius:8px;">{report}</div>', 
-                    unsafe_allow_html=True
-                )
+                st.session_state[report_key] = ai_service.analyze_alert(selected_row)
+                
+        if report_key in st.session_state:
+            st.markdown(
+                f'<div style="background:rgba(13,17,23,0.8); border:1px solid #30363d; '
+                f'padding:20px; border-radius:8px;">{st.session_state[report_key]}</div>', 
+                unsafe_allow_html=True
+            )
         else:
             st.info("Click the button above to generate a detailed MITRE ATT&CK breakdown and mitigation strategy.")

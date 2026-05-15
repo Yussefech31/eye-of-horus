@@ -206,5 +206,5 @@ elif selected_page == "system":
 #  Auto-Refresh
 # ═══════════════════════════════════════════════════════════════════════════════
 
-if auto_refresh:
+if auto_refresh and selected_page not in ["ai_analyst", "simulation"]:
     st_autorefresh(interval=2000, key="soc_dashboard_refresh")

@@ -7,12 +7,8 @@ summaries for alerts. Falls back to deterministic templates if no API key is set
 import os
 import random
 from typing import Dict
-
-# Optional: Add openai to requirements if you want real integration
-try:
-    from openai import OpenAI
-except ImportError:
-    OpenAI = None
+from dotenv import load_dotenv
+from pathlib import Path
 
 # Fallback AI templates
 MOCK_EXPLANATIONS = {
@@ -36,20 +32,33 @@ MOCK_MITIGATIONS = [
 
 class AIAnalystService:
     def __init__(self):
-        self.api_key = os.getenv("OPENAI_API_KEY")
-        self.use_mock = not self.api_key or OpenAI is None
+        env_path = Path(__file__).resolve().parent.parent / ".env"
+        load_dotenv(env_path, override=True)
+        self.api_key = os.getenv("GEMINI_API_KEY")
+        
+        # Fallback: manually parse .env if os.environ caching is stuck
+        if not self.api_key and env_path.exists():
+            with open(env_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.startswith("GEMINI_API_KEY="):
+                        self.api_key = line.split("=", 1)[1].strip()
+                        break
 
-        if not self.use_mock:
-            self.client = OpenAI(api_key=self.api_key)
-
-    def analyze_alert(self, alert_data: Dict) -> str:
+    def analyze_alert(self, alert_data: Dict, api_key: str = None) -> str:
         """
         Generate a detailed AI analysis of a specific threat alert.
+        Uses the new google-genai SDK.
         """
-        if self.use_mock:
+        key_to_use = api_key or self.api_key
+
+        if not key_to_use:
             return self._generate_mock_analysis(alert_data)
         
         try:
+            from google import genai
+            
+            client = genai.Client(api_key=key_to_use)
+            
             prompt = f"""
             Act as an expert Level 3 SOC Analyst. Review the following cyber threat intelligence alert and provide:
             1. A clear explanation of what this threat is.
@@ -65,13 +74,11 @@ class AIAnalystService:
             Format your response in Markdown with clear headings.
             """
             
-            response = self.client.chat.completions.create(
-                model="gpt-4o",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
-                max_tokens=600
+            response = client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=prompt,
             )
-            return response.choices[0].message.content
+            return response.text
         except Exception as e:
             return f"**Error generating AI analysis:** {e}\n\nFalling back to standard analysis...\n\n" + self._generate_mock_analysis(alert_data)
 
