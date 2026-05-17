@@ -1,114 +1,38 @@
 """
 Eye of Horus — Global Attack Map
 Interactive world map showing threat geolocation with severity-colored markers,
-attack clustering, and heatmap overlay.
+attack clustering, and animated attack arcs using PyDeck.
 """
 
-import random
-import hashlib
 import streamlit as st
 import pandas as pd
-import plotly.graph_objects as go
+import pydeck as pdk
 
 from dashboard.components import render_section_header, render_empty_state, render_kpi_row
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  GeoIP Simulation — maps source/IP data to coordinates
-# ═══════════════════════════════════════════════════════════════════════════════
-
-LOCATION_COORDS = {
-    "Russia": (55.75, 37.62),
-    "China": (39.91, 116.39),
-    "United States": (38.90, -77.04),
-    "US": (38.90, -77.04),
-    "USA": (38.90, -77.04),
-    "Iran": (35.69, 51.39),
-    "North Korea": (39.02, 125.75),
-    "Brazil": (-15.79, -47.88),
-    "India": (28.61, 77.21),
-    "Nigeria": (9.06, 7.49),
-    "Ukraine": (50.45, 30.52),
-    "Germany": (52.52, 13.41),
-    "Romania": (44.43, 26.10),
-    "Turkey": (39.93, 32.85),
-    "Vietnam": (21.03, 105.85),
-    "Indonesia": (-6.21, 106.85),
-    "France": (48.86, 2.35),
-    "UK": (51.50, -0.12),
-    "United Kingdom": (51.50, -0.12),
-    "London": (51.50, -0.12),
-    "Paris": (48.85, 2.35),
-    "Moscow": (55.75, 37.62),
-    "Beijing": (39.90, 116.40),
-    "Washington": (38.90, -77.03),
-    "New York": (40.71, -74.00),
-    "Tokyo": (35.68, 139.69),
-    "Israel": (31.04, 34.85),
-    "Unknown": (0.0, 0.0)
-}
-
-def _lookup_geo(location_name: str, post_id: str) -> dict:
-    """Map an NLP-extracted location name to geo coordinates."""
-    if not location_name or pd.isna(location_name):
-        location_name = "Unknown"
-        
-    matched_country = "Unknown"
-    lat, lon = 0.0, 0.0
-    
-    for key, coords in LOCATION_COORDS.items():
-        if key.lower() in str(location_name).lower():
-            matched_country = key
-            lat, lon = coords
-            break
-            
-    # Add a tiny bit of deterministic jitter so points don't perfectly overlap
-    h = int(hashlib.md5(str(post_id).encode()).hexdigest(), 16)
-    lat_jitter = ((h >> 8) % 100 - 50) / 50.0
-    lon_jitter = ((h >> 16) % 100 - 50) / 50.0
-
-    return {
-        "country": matched_country if matched_country != "Unknown" else location_name,
-        "lat": lat + lat_jitter if matched_country != "Unknown" else lat,
-        "lon": lon + lon_jitter if matched_country != "Unknown" else lon,
-    }
-
-
-def _enrich_with_geo(df: pd.DataFrame) -> pd.DataFrame:
-    """Add lat/lon/country columns to threat DataFrame based on NLP extracted location."""
-    if df.empty:
-        return df
-
-    if "extracted_location" not in df.columns:
-        df["extracted_location"] = "Unknown"
-
-    geo_data = df.apply(lambda row: _lookup_geo(row.get("extracted_location", "Unknown"), str(row["post_id"])), axis=1)
-    
-    df = df.copy()
-    df["country"] = geo_data.apply(lambda g: g["country"])
-    df["lat"] = geo_data.apply(lambda g: g["lat"])
-    df["lon"] = geo_data.apply(lambda g: g["lon"])
-    return df
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Severity color mapping
 # ═══════════════════════════════════════════════════════════════════════════════
 
 SEV_COLORS = {
-    "CRITICAL": "#f85149",
-    "HIGH": "#d29922",
-    "MEDIUM": "#58a6ff",
-    "LOW": "#3fb950",
+    "CRITICAL": [248, 81, 73],   # #f85149
+    "HIGH": [210, 153, 34],      # #d29922
+    "MEDIUM": [88, 166, 255],    # #58a6ff
+    "LOW": [63, 185, 80],        # #3fb950
 }
 
-SEV_SIZES = {
-    "CRITICAL": 14,
-    "HIGH": 10,
-    "MEDIUM": 7,
-    "LOW": 5,
+# Attack-type color palette — each attack category gets a distinct neon color
+ATTACK_TYPE_COLORS = {
+    "ransomware":  [255, 45, 85],    # Hot pink
+    "ddos":        [0, 199, 255],    # Electric cyan
+    "apt":         [175, 82, 222],   # Purple
+    "phishing":    [255, 159, 10],   # Orange
+    "zero_day":    [255, 55, 55],    # Bright red
+    "malware":     [50, 215, 75],    # Green
+    "exploit":     [255, 214, 10],   # Yellow
+    "data_breach": [100, 210, 255],  # Light blue
+    "default":     [210, 153, 34],   # Amber fallback
 }
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Render
@@ -117,7 +41,7 @@ SEV_SIZES = {
 def render(df: pd.DataFrame, threshold: float):
     """Render the Global Attack Map page."""
 
-    render_section_header("Global Threat Map", icon="🌍", subtitle="real-time threat geolocation")
+    render_section_header("Global Threat Map", icon="🌍", subtitle="real-time hybrid NLP + Mock threat geolocation")
 
     if df.empty:
         render_empty_state("No threat data available for mapping.", "🌍")
@@ -128,154 +52,218 @@ def render(df: pd.DataFrame, threshold: float):
     if threats.empty:
         threats = df.head(200).copy()
 
-    geo_df = _enrich_with_geo(threats)
+    geo_df, nlp_success, fallback_used = build_geo_df(threats)
+
+    if geo_df.empty:
+        render_empty_state("No valid geolocation data found in threats.", "🌍")
+        return
 
     # ── KPIs ──────────────────────────────────────────────────────────────
-    countries = geo_df["country"].nunique()
-    top_country = geo_df["country"].value_counts().index[0] if not geo_df.empty else "N/A"
-    crit_count = len(geo_df[geo_df.get("severity", pd.Series(dtype=str)).str.upper() == "CRITICAL"]) if "severity" in geo_df.columns else 0
+    countries = geo_df["src_country"].nunique()
+    top_origin = geo_df["src_country"].value_counts().index[0] if not geo_df.empty else "N/A"
+    
+    total = len(threats)
+    nlp_pct = (nlp_success / total) * 100 if total > 0 else 0
+    mock_pct = (fallback_used / total) * 100 if total > 0 else 0
 
     render_kpi_row([
-        {"value": f"{len(geo_df):,}", "label": "Mapped Threats", "icon": "📍", "color": "clr-red"},
-        {"value": f"{countries}", "label": "Countries", "icon": "🌐", "color": "clr-blue"},
-        {"value": top_country, "label": "Top Origin", "icon": "🎯", "color": "clr-amber"},
-        {"value": f"{crit_count}", "label": "Critical", "icon": "💀", "color": "clr-red"},
+        {"value": f"{total:,}", "label": "Mapped Threats", "icon": "📍", "color": "clr-red"},
+        {"value": f"{nlp_pct:.1f}%", "label": "NLP Success Rate", "icon": "🧠", "color": "clr-blue"},
+        {"value": f"{mock_pct:.1f}%", "label": "Fallback Usage", "icon": "🔄", "color": "clr-amber"},
+        {"value": top_origin, "label": "Top Origin", "icon": "🎯", "color": "clr-red"},
     ])
 
     st.markdown("")
 
-    # ── Map Type Toggle ───────────────────────────────────────────────────
-    map_type = st.radio(
-        "Map View", ["Scatter Map", "Heatmap", "Bubble Map"],
-        horizontal=True, key="attack_map_type",
-    )
+    # ── Map View ──────────────────────────────────────────────────────────
+    _build_pydeck_map(geo_df)
 
-    # ── Build Map ─────────────────────────────────────────────────────────
-    if map_type == "Heatmap":
-        fig = _build_heatmap(geo_df)
-    elif map_type == "Bubble Map":
-        fig = _build_bubble_map(geo_df)
-    else:
-        fig = _build_scatter_map(geo_df)
+    st.markdown("---")
 
-    st.plotly_chart(fig, width="stretch", key="attack_map_chart")
-
-    # ── Country Breakdown ─────────────────────────────────────────────────
-    with st.expander("📊 Threat Origin Breakdown", expanded=False):
+    # ── Tables & Breakdown ─────────────────────────────────────────────────
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        st.markdown("#### 🚨 Live Threat Geolocation Feed")
+        
+        display_df = geo_df[["source_badge", "severity", "title", "src_country", "dst_country", "nlp_extracted"]].copy()
+        display_df.rename(columns={
+            "source_badge": "Type",
+            "severity": "Severity",
+            "title": "Title",
+            "src_country": "Source",
+            "dst_country": "Target",
+            "nlp_extracted": "NLP Raw"
+        }, inplace=True)
+        st.dataframe(display_df, use_container_width=True, hide_index=True)
+        
+    with col2:
+        st.markdown("#### 📊 Origin Breakdown")
         country_stats = (
-            geo_df.groupby("country")
-            .agg(count=("threat_score", "count"), avg_score=("threat_score", "mean"), max_score=("threat_score", "max"))
-            .round(3)
-            .sort_values("count", ascending=False)
+            geo_df.groupby("src_country")
+            .agg(attacks=("post_id", "count"))
+            .sort_values("attacks", ascending=False)
             .reset_index()
         )
-        st.dataframe(country_stats, width="stretch", hide_index=True)
+        st.dataframe(country_stats, use_container_width=True, hide_index=True)
 
 
-def _build_scatter_map(df: pd.DataFrame) -> go.Figure:
-    """Scatter map with severity-colored threat markers."""
-    fig = go.Figure()
+# ═══════════════════════════════════════════════════════════════════════════════
+#  Geo DataFrame builder (shared with simulation mini-dashboard)
+# ═══════════════════════════════════════════════════════════════════════════════
 
-    for sev in ["CRITICAL", "HIGH", "MEDIUM", "LOW"]:
-        sev_df = df[df.get("severity", pd.Series(dtype=str)) == sev] if "severity" in df.columns else pd.DataFrame()
-        if sev_df.empty:
-            continue
-        fig.add_trace(go.Scattergeo(
-            lat=sev_df["lat"], lon=sev_df["lon"],
-            text=sev_df.apply(lambda r: f"<b>{r.get('title', 'N/A')[:50]}</b><br>Score: {r['threat_score']:.3f}<br>Source: {r.get('source', '')}<br>Country: {r['country']}", axis=1),
-            hoverinfo="text",
-            marker=dict(
-                size=SEV_SIZES.get(sev, 6),
-                color=SEV_COLORS.get(sev, "#58a6ff"),
-                opacity=0.8,
-                line=dict(width=0.5, color="rgba(255,255,255,0.3)"),
-            ),
-            name=sev,
-        ))
+def build_geo_df(threats: pd.DataFrame) -> tuple[pd.DataFrame, int, int]:
+    """Unpack geo_data dicts into a flat DataFrame for PyDeck.
+    Legacy records without geo_data get mock coordinates on-the-fly."""
+    from services.geolocation.mock_attack_generator import generate_mock_geolocation
 
-    fig.update_layout(**_map_layout())
-    return fig
+    geo_rows = []
+    nlp_success = 0
+    fallback_used = 0
+    
+    for _, row in threats.iterrows():
+        g = row.get("geo_data", None)
+        
+        # Legacy records (processed before the geo upgrade) have no geo_data.
+        # Generate mock coordinates on-the-fly so they still appear on the map.
+        if not isinstance(g, dict) or "src_lat" not in g:
+            post_id = str(row.get("post_id", "unknown"))
+            g = generate_mock_geolocation(post_id)
+            g["nlp_extracted"] = row.get("extracted_location", "Unknown")
+            g["nlp_confidence"] = 0.0
+            g["geo_fallback_used"] = True
+            
+        mock_used = g.get("geo_fallback_used", True)
+        if mock_used:
+            fallback_used += 1
+        else:
+            nlp_success += 1
+            
+        # Determine attack type from extra metadata or title keywords
+        threat_type = "default"
+        extra = row.get("extra", {})
+        if isinstance(extra, dict):
+            threat_type = extra.get("threat_type", "default")
+        if threat_type == "default":
+            # Try to infer from title
+            title_lower = str(row.get("title", "")).lower()
+            for atype in ATTACK_TYPE_COLORS:
+                if atype.replace("_", " ") in title_lower or atype in title_lower:
+                    threat_type = atype
+                    break
+
+        sev = row.get("severity", "LOW")
+        color = ATTACK_TYPE_COLORS.get(threat_type, ATTACK_TYPE_COLORS["default"])
+            
+        geo_rows.append({
+            "post_id": row.get("post_id"),
+            "title": str(row.get("title", "Unknown"))[:60],
+            "severity": sev,
+            "threat_type": threat_type,
+            "threat_score": round(float(row.get("threat_score", 0.0)), 3),
+            "color_r": color[0],
+            "color_g": color[1],
+            "color_b": color[2],
+            
+            "src_lat": float(g.get("src_lat", 0.0)),
+            "src_lon": float(g.get("src_lon", 0.0)),
+            "src_country": g.get("src_country", "Unknown"),
+            "src_isp": g.get("src_isp", "Unknown"),
+            
+            "dst_lat": float(g.get("dst_lat", 0.0)),
+            "dst_lon": float(g.get("dst_lon", 0.0)),
+            "dst_country": g.get("dst_country", "Unknown"),
+            "dst_isp": g.get("dst_isp", "Unknown"),
+            
+            "is_mock": mock_used,
+            "source_badge": "MOCK" if mock_used else "NLP",
+            "nlp_extracted": g.get("nlp_extracted", "Unknown"),
+        })
+
+    return pd.DataFrame(geo_rows), nlp_success, fallback_used
 
 
-def _build_heatmap(df: pd.DataFrame) -> go.Figure:
-    """Density heatmap of threat origins."""
-    fig = go.Figure(go.Densitymapbox(
-        lat=df["lat"], lon=df["lon"],
-        z=df["threat_score"],
-        radius=20,
-        colorscale=[[0, "rgba(88,166,255,0)"], [0.3, "#58a6ff"], [0.6, "#d29922"], [1, "#f85149"]],
-        showscale=False,
-        hoverinfo="skip",
-    ))
+# ═══════════════════════════════════════════════════════════════════════════════
+#  PyDeck Map
+# ═══════════════════════════════════════════════════════════════════════════════
 
-    fig.update_layout(
-        mapbox=dict(
-            style="carto-darkmatter",
-            center=dict(lat=25, lon=15),
-            zoom=1.2,
-        ),
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        margin=dict(l=0, r=0, t=0, b=0),
-        height=500,
+def _build_pydeck_map(df: pd.DataFrame):
+    """Builds an interactive PyDeck map with animated arcs and scatter nodes."""
+    
+    if df.empty:
+        return
+
+    tooltip = {
+        "html": "<b>{title}</b><br/>"
+                "<b>Severity:</b> {severity} ({threat_score})<br/>"
+                "<b>Source:</b> {src_country} ({src_isp})<br/>"
+                "<b>Target:</b> {dst_country} ({dst_isp})<br/>"
+                "<b>Geo Type:</b> {source_badge}",
+        "style": {
+            "backgroundColor": "#161b22",
+            "color": "#c9d1d9",
+            "border": "1px solid #30363d",
+            "borderRadius": "5px"
+        }
+    }
+
+    # 1. Arc Layer: Attack flow lines from source to destination
+    arc_layer = pdk.Layer(
+        "ArcLayer",
+        data=df,
+        get_source_position=["src_lon", "src_lat"],
+        get_target_position=["dst_lon", "dst_lat"],
+        get_source_color=["color_r", "color_g", "color_b", 160],
+        get_target_color=["color_r", "color_g", "color_b", 80],
+        auto_highlight=True,
+        width_scale=1,
+        get_width=1,
+        width_min_pixels=1,
+        width_max_pixels=3,
+        pickable=True,
     )
-    return fig
 
-
-def _build_bubble_map(df: pd.DataFrame) -> go.Figure:
-    """Aggregated bubble map by country."""
-    country_agg = df.groupby("country").agg(
-        count=("threat_score", "count"),
-        avg_score=("threat_score", "mean"),
-        lat=("lat", "mean"),
-        lon=("lon", "mean"),
-    ).reset_index()
-
-    fig = go.Figure(go.Scattergeo(
-        lat=country_agg["lat"], lon=country_agg["lon"],
-        text=country_agg.apply(lambda r: f"<b>{r['country']}</b><br>Threats: {r['count']}<br>Avg Score: {r['avg_score']:.3f}", axis=1),
-        hoverinfo="text",
-        marker=dict(
-            size=country_agg["count"].clip(upper=50) * 1.5 + 5,
-            color=country_agg["avg_score"],
-            colorscale=[[0, "#3fb950"], [0.5, "#d29922"], [1, "#f85149"]],
-            cmin=0, cmax=1,
-            opacity=0.7,
-            line=dict(width=1, color="rgba(255,255,255,0.4)"),
-            showscale=True,
-            colorbar=dict(title="Avg Score", tickfont=dict(color="#8b949e"), titlefont=dict(color="#8b949e")),
-        ),
-    ))
-
-    fig.update_layout(**_map_layout())
-    return fig
-
-
-def _map_layout() -> dict:
-    """Shared geo layout for dark theme maps."""
-    return dict(
-        geo=dict(
-            bgcolor="rgba(0,0,0,0)",
-            showframe=False,
-            showcoastlines=True,
-            coastlinecolor="rgba(88,166,255,0.2)",
-            showland=True,
-            landcolor="rgba(13,17,23,0.9)",
-            showocean=True,
-            oceancolor="rgba(5,8,16,0.95)",
-            showcountries=True,
-            countrycolor="rgba(33,38,45,0.6)",
-            showlakes=False,
-            projection_type="natural earth",
-        ),
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        margin=dict(l=0, r=0, t=0, b=0),
-        height=500,
-        legend=dict(
-            bgcolor="rgba(13,17,23,0.8)",
-            bordercolor="#21262d",
-            font=dict(color="#8b949e", size=11),
-            x=0.01, y=0.99,
-        ),
+    # 2. Scatterplot: Source nodes
+    scatter_src = pdk.Layer(
+        "ScatterplotLayer",
+        data=df,
+        get_position=["src_lon", "src_lat"],
+        get_fill_color=["color_r", "color_g", "color_b", 200],
+        get_radius=60000,
+        pickable=True,
+        opacity=0.7,
+        filled=True,
+        radius_scale=2,
+        radius_min_pixels=4,
+        radius_max_pixels=12,
     )
+    
+    # 3. Scatterplot: Destination nodes (white glow)
+    scatter_dst = pdk.Layer(
+        "ScatterplotLayer",
+        data=df,
+        get_position=["dst_lon", "dst_lat"],
+        get_fill_color=[255, 255, 255, 80],
+        get_radius=40000,
+        pickable=False,
+        opacity=0.3,
+        filled=True,
+        radius_scale=2,
+        radius_min_pixels=2,
+        radius_max_pixels=8,
+    )
+
+    view_state = pdk.ViewState(
+        latitude=20.0,
+        longitude=10.0,
+        zoom=1.3,
+        pitch=0,
+    )
+
+    deck = pdk.Deck(
+        layers=[arc_layer, scatter_src, scatter_dst],
+        initial_view_state=view_state,
+        tooltip=tooltip,
+    )
+
+    st.pydeck_chart(deck, use_container_width=True, height=500)

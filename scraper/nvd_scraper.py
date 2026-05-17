@@ -36,6 +36,8 @@ from config.settings import kafka as kafka_cfg
 NVD_BASE_URL    = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 NVD_PAGE_SIZE   = 100   # Max results per page (NVD limit)
 NVD_RATE_DELAY  = 6     # Seconds between requests (5 req/30s limit)
+DATE_FMT        = "%Y-%m-%dT%H:%M:%S.000"
+MIN_YEAR        = 2023  # Hard floor — reject anything published before this year
 
 
 class NvdApiClient:
@@ -83,8 +85,14 @@ class NvdApiClient:
         if min_cvss > 0:
             params["cvssV3Severity"] = self._cvss_to_severity(min_cvss)
 
+    def _paginate(self, params: dict) -> list[dict]:
+        """Fetch all pages for a given set of query params."""
+        all_cves: list[dict] = []
+        p = dict(params)
+        p["startIndex"] = 0
+
         while True:
-            data = self._get(params)
+            data = self._get(p)
             vulnerabilities = data.get("vulnerabilities", [])
             all_cves.extend(vulnerabilities)
 
@@ -96,14 +104,67 @@ class NvdApiClient:
                 f"fetched={len(vulnerabilities)}, total={total_results}"
             )
 
-            # Check if more pages exist
             if start_index + len(vulnerabilities) >= total_results:
                 break
 
-            params["startIndex"] += NVD_PAGE_SIZE
+            p["startIndex"] += NVD_PAGE_SIZE
             time.sleep(NVD_RATE_DELAY)  # Respect rate limit
 
         return all_cves
+
+    def get_recent_cves(
+        self,
+        days_back: int = 30,
+        min_cvss: float = 0.0,
+    ) -> list[dict]:
+        """
+        Dual-query strategy:
+          1. Publication window (last `days_back` days) — catches fresh CVEs.
+          2. Last-modified window (48 h) — catches old CVEs upgraded to CRITICAL.
+        Results are merged and deduplicated by CVE ID.
+        """
+        now      = datetime.now(timezone.utc)
+        pub_start = now - timedelta(days=days_back)
+        mod_start = now - timedelta(hours=48)
+
+        # Query 1: recently published
+        pub_params: dict = {
+            "pubStartDate":   pub_start.strftime(DATE_FMT),
+            "pubEndDate":     now.strftime(DATE_FMT),
+            "resultsPerPage": NVD_PAGE_SIZE,
+        }
+        if min_cvss > 0:
+            pub_params["cvssV3Severity"] = self._cvss_to_severity(min_cvss)
+
+        logger.info(f"[nvd] Fetching published CVEs ({days_back}d window)…")
+        pub_cves = self._paginate(pub_params)
+        logger.info(f"[nvd] Published query returned {len(pub_cves)} CVE(s).")
+        time.sleep(NVD_RATE_DELAY)
+
+        # Query 2: recently modified (CVSS upgrades)
+        mod_params: dict = {
+            "lastModStartDate": mod_start.strftime(DATE_FMT),
+            "lastModEndDate":   now.strftime(DATE_FMT),
+            "resultsPerPage":   NVD_PAGE_SIZE,
+        }
+        if min_cvss > 0:
+            mod_params["cvssV3Severity"] = self._cvss_to_severity(min_cvss)
+
+        logger.info("[nvd] Fetching recently modified CVEs (48h window)…")
+        mod_cves = self._paginate(mod_params)
+        logger.info(f"[nvd] Modified query returned {len(mod_cves)} CVE(s).")
+
+        # Merge + deduplicate by CVE ID
+        seen: set[str] = set()
+        merged: list[dict] = []
+        for item in pub_cves + mod_cves:
+            cve_id = item.get("cve", {}).get("id", "")
+            if cve_id and cve_id not in seen:
+                seen.add(cve_id)
+                merged.append(item)
+
+        logger.info(f"[nvd] Total unique CVEs after dedup: {len(merged)}.")
+        return merged
 
     @staticmethod
     def _cvss_to_severity(score: float) -> str:
@@ -136,29 +197,45 @@ class NvdScraper(BaseScraper):
 
     def __init__(
         self,
-        hours_back: int = 24,
+        days_back: int = 30,
         min_cvss: float = 0.0,
     ) -> None:
         self._client    = NvdApiClient()
-        self._hours_back = hours_back
+        self._days_back = days_back
         self._min_cvss  = min_cvss
         logger.info(
-            f"[nvd] Initialized. Look-back: {hours_back}h, "
+            f"[nvd] Initialized. Look-back: {days_back} days, "
             f"min CVSS: {min_cvss}"
         )
 
     # ── Fetch ─────────────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _is_recent_enough(cve_item: dict) -> bool:
+        """Hard guard: reject any CVE published before MIN_YEAR."""
+        published = cve_item.get("cve", {}).get("published", "")
+        try:
+            return int(published[:4]) >= MIN_YEAR
+        except (ValueError, TypeError):
+            return False
+
     def fetch(self) -> Iterator[dict[str, Any]]:
-        """Fetch recent CVEs from NVD and yield raw vulnerability dicts."""
-        logger.info(f"[nvd] Fetching CVEs (last {self._hours_back}h)...")
+        """Fetch recent CVEs from NVD (dual-query) and yield raw vulnerability dicts."""
+        logger.info(f"[nvd] Fetching CVEs (last {self._days_back} days)…")
         try:
             cves = self._client.get_recent_cves(
-                hours_back=self._hours_back,
+                days_back=self._days_back,
                 min_cvss=self._min_cvss,
             )
-            logger.info(f"[nvd] {len(cves)} CVE(s) fetched.")
-            for cve in cves:
+            # Apply publication-year hard filter as a safety net
+            recent = [c for c in cves if self._is_recent_enough(c)]
+            filtered_out = len(cves) - len(recent)
+            if filtered_out:
+                logger.warning(
+                    f"[nvd] Dropped {filtered_out} CVE(s) published before {MIN_YEAR}."
+                )
+            logger.info(f"[nvd] {len(recent)} CVE(s) passed year guard.")
+            for cve in recent:
                 yield cve
         except requests.HTTPError as e:
             logger.error(f"[nvd] API error: {e.response.status_code} — {e}")
@@ -257,8 +334,8 @@ if __name__ == "__main__":
 
     logger.add("logs/scraper_nvd.log", rotation="10 MB", retention="7 days")
 
-    # Pull CVEs from last 24h, all severity levels
-    scraper = NvdScraper(hours_back=24, min_cvss=0.0)
+    # Pull CVEs from last 30 days, all severity levels
+    scraper = NvdScraper(days_back=30, min_cvss=0.0)
 
     with OsintProducer() as producer:
 

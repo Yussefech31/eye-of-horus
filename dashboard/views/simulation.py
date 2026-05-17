@@ -1,120 +1,231 @@
 """
-Eye of Horus — Simulation Mode
-Control panel to inject synthetic threat data and run controlled attack scenarios
-for testing and demonstration purposes.
+Eye of Horus — Cyber Range Simulation Center
 """
 
 import sys
+import os
+import time
 from pathlib import Path
-
+import pandas as pd
 import streamlit as st
+import threading
 from pymongo import MongoClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from config.settings import mongo as mongo_cfg
 from dashboard.components import render_section_header, render_kpi_row
-from scraper.mock_scraper import SCENARIOS
+
+# Add simulation engine to path so we can trigger the scenarios
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "simulation_engine"))
+try:
+    from simulation_engine.scenario_generators.scenarios import SCENARIO_MAP
+    from simulation_engine.validators.pipeline_validator import PipelineValidator
+    from simulation_engine.engine import SimulationEngine
+except ImportError:
+    SCENARIO_MAP = {}
+    PipelineValidator = None
+    SimulationEngine = None
 
 
-def get_sim_state():
-    """Get the current simulation state from MongoDB."""
+def get_db_client():
+    return MongoClient(mongo_cfg.URI, serverSelectionTimeoutMS=2000)
+
+@st.cache_resource
+def get_engine():
+    if SimulationEngine:
+        return SimulationEngine()
+    return None
+
+def inject_scenario_batch(scenario_name: str, intensity: int):
+    """Pushes a batch of scenario events to Kafka (sim-raw-osint)"""
+    from broker.producer import OsintProducer
+    generator = SCENARIO_MAP.get(scenario_name)
+    if not generator:
+        return 0
+    events = list(generator.generate(intensity))
+    if not events:
+        return 0
+        
     try:
-        client = MongoClient(mongo_cfg.URI, serverSelectionTimeoutMS=2000)
-        db = client[mongo_cfg.DB_NAME]
-        state = db.simulation_state.find_one()
-        if not state:
-            state = {"active": False, "scenario": "Random", "intensity": 5}
-            db.simulation_state.insert_one(state)
-        return state, db.simulation_state
+        from config.settings import kafka as kafka_cfg
+        with OsintProducer() as producer:
+            for event in events:
+                # Transform to OSINT schema
+                from datetime import datetime, timezone
+                record = {
+                    "post_id": event["id"],
+                    "title": event["title"],
+                    "text": event["description"],
+                    "author": event["author"],
+                    "url": event["url"],
+                    "published_at": datetime.fromtimestamp(event["created_utc"], tz=timezone.utc).isoformat(),
+                    "extra": {
+                        "source_type": "simulation",
+                        "threat_type": event["threat_type"],
+                        "source_ip": event["source_ip"],
+                        "cvss_score": event["cvss"],
+                        "num_comments": event["comments"],
+                        "upvote_ratio": 1.0,
+                    }
+                }
+                producer.send(record, topic="sim-raw-osint", key="simulation")
+        return len(events)
     except Exception as e:
-        st.error(f"Failed to connect to MongoDB: {e}")
-        return {"active": False, "scenario": "Random", "intensity": 5}, None
+        st.error(f"Kafka error: {e}")
+        return 0
+
+def fetch_sim_data():
+    """Fetch data from sim collections for mini dashboards."""
+    try:
+        client = get_db_client()
+        db = client[mongo_cfg.DB_NAME]
+        alerts = list(db.sim_threat_scores.find().sort("processed_at", -1).limit(100))
+        df = pd.DataFrame(alerts)
+        return df
+    except Exception:
+        return pd.DataFrame()
 
 
 def render():
-    """Render the Simulation Control Panel."""
+    """Render the Cyber Range Control Center."""
+    render_section_header("Cyber Range Simulation", icon="🎯", subtitle="isolated environment for full system testing")
 
-    render_section_header("Simulation & Demo Mode", icon="🎮", subtitle="control synthetic threat generation")
+    engine = get_engine()
+    if not engine:
+        st.error("Simulation Engine module not found.")
+        return
 
-    state, collection = get_sim_state()
-    is_active = state.get("active", False)
+    # Initialize session state for auto-refresh
+    if "sim_auto_refresh" not in st.session_state:
+        st.session_state.sim_auto_refresh = False
+
+    # ── Controls ──────────────────────────────────────────────────────────
+    st.markdown("### 🎛️ Command Center")
+    with st.container():
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            scenario = st.selectbox("Attack Scenario", options=list(SCENARIO_MAP.keys()))
+        with col2:
+            intensity = st.slider("Attack Intensity", min_value=1, max_value=20, value=5)
+        with col3:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("🚀 Inject Scenario Batch", use_container_width=True, type="primary"):
+                if not engine.is_running:
+                    st.warning("Start the Simulation Pipeline first!")
+                else:
+                    count = inject_scenario_batch(scenario, intensity)
+                    st.toast(f"Injected {count} events into simulation pipeline!", icon="☠️")
+        with col4:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if engine.is_running:
+                if st.button("🛑 Stop Pipeline", use_container_width=True):
+                    engine.stop_pipeline()
+                    st.session_state.sim_auto_refresh = False
+                    st.rerun()
+            else:
+                if st.button("⚡ Start Isolated Pipeline", use_container_width=True):
+                    engine.start_pipeline()
+                    st.session_state.sim_auto_refresh = True
+                    st.rerun()
+
+    st.markdown("---")
     
-    # ── Status Banner ─────────────────────────────────────────────────────
-    if is_active:
+    st.markdown("### 🌪️ Stress Testing")
+    with st.expander("Advanced Pipeline Stress Test", expanded=False):
+        st.warning("This will flood the pipeline with thousands of events per second.")
+        st_col1, st_col2 = st.columns(2)
+        with st_col1:
+            stress_rate = st.number_input("Events / Sec", min_value=100, max_value=5000, value=500, step=100)
+        with st_col2:
+            stress_dur = st.number_input("Duration (Sec)", min_value=1, max_value=60, value=5, step=1)
+            
+        if st.button("🚨 Launch Stress Test", type="primary"):
+            if not engine.is_running:
+                st.error("Start the Simulation Pipeline first!")
+            else:
+                from simulation_engine.stress_testing.flooder import run_stress_test
+                with st.spinner("Flooding pipeline..."):
+                    run_stress_test(events_per_sec=stress_rate, duration_sec=stress_dur)
+                st.success("Stress test complete. Check validators for pipeline health.")
+
+    st.markdown("---")
+
+    # ── Validators & Live Status ──────────────────────────────────────────
+    st.markdown("### 🛡️ System Validation")
+    
+    if engine.is_running:
         st.markdown(
-            '<div style="background:rgba(248,81,73,0.1); border:1px solid rgba(248,81,73,0.4); '
-            'padding:15px; border-radius:8px; margin-bottom:20px;">'
-            '<h4 style="color:#f85149; margin:0 0 5px 0;">🔴 SIMULATION ACTIVE</h4>'
-            '<p style="color:#e6edf3; margin:0; font-size:0.9rem;">Synthetic threat data is currently being injected into the pipeline.</p>'
+            '<div style="background:rgba(35, 134, 54, 0.1); border:1px solid rgba(35, 134, 54, 0.4); padding:10px; border-radius:5px; margin-bottom:15px;">'
+            '<span style="color:#2ea043; font-weight:bold;">🟢 PIPELINE ACTIVE:</span> Isolated Consumer & Threat Processor running.'
             '</div>', unsafe_allow_html=True
         )
     else:
         st.markdown(
-            '<div style="background:rgba(88,166,255,0.1); border:1px solid rgba(88,166,255,0.4); '
-            'padding:15px; border-radius:8px; margin-bottom:20px;">'
-            '<h4 style="color:#58a6ff; margin:0 0 5px 0;">⏸️ SIMULATION PAUSED</h4>'
-            '<p style="color:#e6edf3; margin:0; font-size:0.9rem;">Pipeline is running in pure OSINT mode (no synthetic data).</p>'
+            '<div style="background:rgba(248,81,73,0.1); border:1px solid rgba(248,81,73,0.4); padding:10px; border-radius:5px; margin-bottom:15px;">'
+            '<span style="color:#f85149; font-weight:bold;">🔴 PIPELINE OFFLINE:</span> Start pipeline to process simulation events.'
             '</div>', unsafe_allow_html=True
         )
 
-    # ── Controls ──────────────────────────────────────────────────────────
-    with st.form("sim_controls_form"):
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            scenario_options = ["Random"] + list(SCENARIOS.keys())
-            current_scenario = state.get("scenario", "Random")
-            if current_scenario not in scenario_options:
-                current_scenario = "Random"
-                
-            selected_scenario = st.selectbox(
-                "Attack Scenario", 
-                options=scenario_options,
-                index=scenario_options.index(current_scenario),
-                help="Select the type of threat data to generate."
-            )
-            
-            st.markdown(f"**Scenario Details:**")
-            if selected_scenario == "Random":
-                st.caption("Mixes all attack types randomly.")
-            else:
-                keywords = SCENARIOS[selected_scenario]["keywords"]
-                st.caption(f"Keywords: {', '.join(keywords)}")
+    val_col1, val_col2, val_col3, val_col4 = st.columns(4)
+    validator = PipelineValidator() if PipelineValidator else None
+    metrics = validator.get_validation_metrics() if validator else {}
 
-        with col2:
-            intensity = st.slider(
-                "Attack Intensity (Events/sec)", 
-                min_value=1, max_value=10, 
-                value=state.get("intensity", 5),
-                help="Higher intensity generates more records and forces higher threat scores."
-            )
-            
-            new_status = st.radio(
-                "Engine Status",
-                options=["Active", "Paused"],
-                index=0 if is_active else 1,
-                horizontal=True
-            )
+    with val_col1:
+        color = "green" if metrics.get("raw_ingested", 0) > 0 else "gray"
+        st.markdown(f"**Kafka -> Mongo**<br><span style='color:{color}; font-size:24px;'>●</span> {metrics.get('raw_ingested', 0)} events", unsafe_allow_html=True)
+    with val_col2:
+        color = "green" if metrics.get("threats_scored", 0) > 0 else "gray"
+        st.markdown(f"**Threat Scoring**<br><span style='color:{color}; font-size:24px;'>●</span> {metrics.get('threats_scored', 0)} scored", unsafe_allow_html=True)
+    with val_col3:
+        # Anomaly detected
+        color = "orange" if metrics.get("anomaly_detected") else "gray"
+        st.markdown(f"**Anomaly Engine**<br><span style='color:{color}; font-size:24px;'>●</span> {'Triggered' if metrics.get('anomaly_detected') else 'Idle'}", unsafe_allow_html=True)
+    with val_col4:
+        # Scoring Accuracy
+        acc = metrics.get("scoring_accuracy")
+        color = "green" if acc is True else ("red" if acc is False else "gray")
+        status = "Passed" if acc is True else ("Failed" if acc is False else "Waiting")
+        st.markdown(f"**CVSS Severity Logic**<br><span style='color:{color}; font-size:24px;'>●</span> {status}", unsafe_allow_html=True)
 
-        submit = st.form_submit_button("Update Simulation Engine", type="primary")
-
-        if submit and collection is not None:
-            new_active = new_status == "Active"
-            collection.update_one(
-                {}, 
-                {"$set": {"active": new_active, "scenario": selected_scenario, "intensity": intensity}},
-                upsert=True
-            )
-            st.toast("Simulation engine updated successfully!", icon="✅")
-            st.rerun()
-
-    # ── Instruction ───────────────────────────────────────────────────────
     st.markdown("---")
-    st.markdown("""
-    ### How it Works
-    1. **Scraper Orchestrator**: The backend `orchestrator.py` continuously runs the `MockScraper` in the background.
-    2. **Database Sync**: The scraper reads the configuration you set here from MongoDB every 2 seconds.
-    3. **Injection**: If Active, it injects realistic OSINT payloads matching the scenario directly into the Kafka `raw-osint` topic.
-    4. **Processing**: The Threat Processor scores these synthetic events exactly like real OSINT, allowing you to demo the correlation engine, attack map, and live alerts in real-time.
-    """)
+
+    # ── Mini Dashboards ───────────────────────────────────────────────────
+    st.markdown("### 📊 Live Simulation Dashboards")
+    
+    df = fetch_sim_data()
+    
+    dash_col1, dash_col2 = st.columns([1, 1])
+    
+    with dash_col1:
+        st.markdown("#### 🌍 Attack Map (Simulated)")
+        if not df.empty:
+            from dashboard.views.attack_map import _build_pydeck_map, build_geo_df
+            try:
+                geo_df, _, _ = build_geo_df(df)
+                if not geo_df.empty:
+                    _build_pydeck_map(geo_df)
+                else:
+                    st.info("No geospatial data mapped yet.")
+            except Exception as e:
+                st.error(f"Map error: {e}")
+        else:
+            st.info("No geospatial events generated yet.")
+
+    with dash_col2:
+        st.markdown("#### 🚨 Alerts Feed (Simulated)")
+        if not df.empty:
+            st.dataframe(
+                df[["post_id", "severity", "threat_score", "source", "title"]].head(20),
+                use_container_width=True,
+                hide_index=True
+            )
+        else:
+            st.info("No alerts generated yet.")
+            
+    # Auto-refresh loop
+    if st.session_state.sim_auto_refresh:
+        time.sleep(2)
+        st.rerun()
+

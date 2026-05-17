@@ -34,15 +34,20 @@ class AIAnalystService:
     def __init__(self):
         env_path = Path(__file__).resolve().parent.parent / ".env"
         load_dotenv(env_path, override=True)
-        self.api_key = os.getenv("GEMINI_API_KEY")
+        # Support both GROQ_API_KEY and the legacy GEMINI_API_KEY variable name
+        self.api_key = os.getenv("GROQ_API_KEY") or os.getenv("GEMINI_API_KEY")
         
         # Fallback: manually parse .env if os.environ caching is stuck
         if not self.api_key and env_path.exists():
             with open(env_path, "r", encoding="utf-8") as f:
                 for line in f:
-                    if line.startswith("GEMINI_API_KEY="):
+                    line = line.strip()
+                    if line.startswith("GROQ_API_KEY="):
                         self.api_key = line.split("=", 1)[1].strip()
                         break
+                    if line.startswith("GEMINI_API_KEY="):
+                        self.api_key = line.split("=", 1)[1].strip()
+                        # keep scanning in case GROQ_API_KEY appears later
 
     def analyze_alert(self, alert_data: Dict, api_key: str = None) -> str:
         """
@@ -55,30 +60,31 @@ class AIAnalystService:
             return self._generate_mock_analysis(alert_data)
         
         try:
-            from google import genai
+            from groq import Groq
             
-            client = genai.Client(api_key=key_to_use)
+            client = Groq(api_key=key_to_use)
             
-            prompt = f"""
-            Act as an expert Level 3 SOC Analyst. Review the following cyber threat intelligence alert and provide:
-            1. A clear explanation of what this threat is.
-            2. Potential impact on the organization.
-            3. Recommended immediate mitigation steps.
+            prompt = f"""Act as an expert Level 3 SOC Analyst. Review the following cyber threat intelligence alert and provide:
+1. A clear explanation of what this threat is.
+2. Potential impact on the organization.
+3. Recommended immediate mitigation steps with MITRE ATT&CK references.
+
+Alert Data:
+Title: {alert_data.get('title')}
+Source: {alert_data.get('source')}
+Threat Score: {alert_data.get('threat_score')}
+Severity: {alert_data.get('severity', 'Unknown')}
+Content: {str(alert_data.get('text', ''))[:1500]}
+
+Format your response in Markdown with clear headings."""
             
-            Alert Data:
-            Title: {alert_data.get('title')}
-            Source: {alert_data.get('source')}
-            Score: {alert_data.get('threat_score')}
-            Content: {alert_data.get('text')}
-            
-            Format your response in Markdown with clear headings.
-            """
-            
-            response = client.models.generate_content(
-                model="gemini-2.0-flash",
-                contents=prompt,
+            chat = client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.4,
+                max_tokens=1024,
             )
-            return response.text
+            return chat.choices[0].message.content
         except Exception as e:
             return f"**Error generating AI analysis:** {e}\n\nFalling back to standard analysis...\n\n" + self._generate_mock_analysis(alert_data)
 
