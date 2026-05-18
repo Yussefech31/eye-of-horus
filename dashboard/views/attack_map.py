@@ -68,8 +68,7 @@ def render(df: pd.DataFrame, threshold: float):
 
     render_kpi_row([
         {"value": f"{total:,}", "label": "Mapped Threats", "icon": "📍", "color": "clr-red"},
-        {"value": f"{nlp_pct:.1f}%", "label": "NLP Success Rate", "icon": "🧠", "color": "clr-blue"},
-        {"value": f"{mock_pct:.1f}%", "label": "Fallback Usage", "icon": "🔄", "color": "clr-amber"},
+        {"value": f"{countries}", "label": "Unique Origins", "icon": "🌍", "color": "clr-blue"},
         {"value": top_origin, "label": "Top Origin", "icon": "🎯", "color": "clr-red"},
     ])
 

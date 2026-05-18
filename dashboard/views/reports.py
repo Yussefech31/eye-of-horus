@@ -14,6 +14,16 @@ import pandas as pd
 from fpdf import FPDF
 
 from dashboard.components import render_section_header, render_empty_state, render_kpi_row
+import importlib
+import services.ai_service
+try:
+    importlib.reload(services.ai_service)
+except Exception:
+    pass
+from services.ai_service import AIAnalystService
+
+def get_ai_service():
+    return AIAnalystService()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -53,7 +63,7 @@ class SOCReportPDF(FPDF):
         self.cell(0, 10, f'Page {self.page_no()} | Generated on: {datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")}', 0, 0, 'C')
 
 
-def generate_pdf_report(df: pd.DataFrame, author: str, time_window: str) -> bytes:
+def generate_pdf_report(df: pd.DataFrame, author: str, time_window: str, ai_summary: str = None) -> bytes:
     """Generate a formatted PDF report."""
     pdf = SOCReportPDF()
     pdf.add_page()
@@ -78,6 +88,16 @@ def generate_pdf_report(df: pd.DataFrame, author: str, time_window: str) -> byte
     )
     pdf.multi_cell(0, 6, summary_text)
     pdf.ln(5)
+
+    if ai_summary:
+        pdf.set_font('Arial', 'B', 12)
+        pdf.set_text_color(30, 30, 30)
+        pdf.cell(0, 10, 'AI Threat Analysis', 0, 1)
+        
+        pdf.set_font('Arial', '', 10)
+        pdf.set_text_color(50, 50, 50)
+        pdf.multi_cell(0, 6, sanitize_text(ai_summary))
+        pdf.ln(5)
 
     # ── Top Threats ──────────────────────────────────────────────────────
     pdf.set_font('Arial', 'B', 12)
@@ -140,7 +160,6 @@ def render(df: pd.DataFrame, threshold: float, time_window: str):
         report_title = st.text_input("Report Title", "Daily SOC Threat Briefing", key="rep_title")
         author = st.text_input("Prepared By", "SOC Analyst", key="rep_author")
     with col_cfg2:
-        include_charts = st.checkbox("Include Charts (Pro)", disabled=True, help="Requires premium PDF engine")
         only_threats = st.checkbox("Only Include Threats > Threshold", value=True)
 
     st.markdown("")
@@ -162,9 +181,13 @@ def render(df: pd.DataFrame, threshold: float, time_window: str):
         st.caption("A formatted summary document suitable for management and daily briefings.")
         
         if st.button("Generate PDF Report", key="gen_pdf", use_container_width=True):
-            with st.spinner("Generating PDF..."):
+            with st.spinner("Generating PDF with AI Threat Analysis..."):
                 try:
-                    pdf_bytes = generate_pdf_report(report_df, author, time_window)
+                    ai_service = get_ai_service()
+                    st.toast("Asking AI Analyst to summarize threats...", icon="🧠")
+                    ai_summary = ai_service.generate_report_summary(report_df)
+                        
+                    pdf_bytes = generate_pdf_report(report_df, author, time_window, ai_summary)
                     b64_pdf = base64.b64encode(pdf_bytes).decode('utf-8')
                     
                     # Create a download link using HTML to avoid Streamlit rerun issues

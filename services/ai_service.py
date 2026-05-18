@@ -9,6 +9,7 @@ import random
 from typing import Dict
 from dotenv import load_dotenv
 from pathlib import Path
+import pandas as pd
 
 # Fallback AI templates
 MOCK_EXPLANATIONS = {
@@ -87,6 +88,49 @@ Format your response in Markdown with clear headings."""
             return chat.choices[0].message.content
         except Exception as e:
             return f"**Error generating AI analysis:** {e}\n\nFalling back to standard analysis...\n\n" + self._generate_mock_analysis(alert_data)
+
+    def generate_report_summary(self, df: pd.DataFrame, api_key: str = None) -> str:
+        """
+        Generate a high-level executive summary of the current threat landscape based on a dataframe of alerts.
+        """
+        key_to_use = api_key or self.api_key
+
+        if not key_to_use or df.empty:
+            return "Local AI Engine (Mock Mode): Multiple high-severity indicators of compromise were detected across the monitored infrastructure. Recommend immediate review of the top critical threats listed below."
+        
+        try:
+            from groq import Groq
+            client = Groq(api_key=key_to_use)
+            
+            # Prepare a summary of the top threats
+            top_threats = df.sort_values(by="threat_score", ascending=False).head(10)
+            threat_list_text = "\n".join([
+                f"- [{r.get('severity', 'UNK')}] {r.get('title', 'N/A')} (Score: {r.get('threat_score', 0):.2f}, Source: {r.get('source', 'N/A')})"
+                for _, r in top_threats.iterrows()
+            ])
+            
+            prompt = f"""Act as a Chief Information Security Officer (CISO). 
+Write a highly professional, concise, 2-paragraph Executive Summary for a daily Threat Intelligence Report. 
+Analyze the following top threats currently active in our environment and identify key trends or required immediate actions.
+
+Top Threats:
+{threat_list_text}
+
+Do not use markdown headers or bullet points. Provide just two well-written paragraphs of text suitable for embedding directly into a PDF report."""
+            
+            chat = client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+                max_tokens=500,
+            )
+            # Clean up the response to just be plain text for the PDF
+            content = chat.choices[0].message.content.strip()
+            content = content.replace("**", "").replace("##", "")
+            return content
+            
+        except Exception as e:
+            return f"Error generating AI summary: {e}. Fallback: Multiple high-severity indicators of compromise were detected."
 
     def _generate_mock_analysis(self, alert_data: Dict) -> str:
         """Generates a deterministic markdown analysis when no API key is present."""
